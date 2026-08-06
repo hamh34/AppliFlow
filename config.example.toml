@@ -1,0 +1,24 @@
+# Copy this file to config.toml and fill in your own values.
+# config.toml is gitignored, so your spreadsheet ID stays out of the repo.
+
+# From your sheet's URL:
+# https://docs.google.com/spreadsheets/d/THIS_PART_HERE/edit
+spreadsheet_id = "paste-your-spreadsheet-id-here"
+
+# Tab name inside the spreadsheet.
+worksheet = "Applications"
+
+# How far back `scan` reads Gmail, in days.
+lookback_days = 90
+
+# `followups` flags anything with no movement for this many days.
+followup_days = 14
+
+# Optional: override the Gmail search entirely. Leave commented out to use the
+# built-in query, which looks for the usual application phrases. Useful if you
+# file recruiting mail under a label, e.g. "label:job-hunt newer_than:90d".
+# gmail_query = ""
+
+# Optional: paths relative to this file. Defaults shown.
+# credentials_file = "credentials.json"
+# token_file = "token.json"

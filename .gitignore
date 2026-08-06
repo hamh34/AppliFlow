@@ -1,0 +1,12 @@
+# Google OAuth secrets - never commit these
+credentials.json
+token.json
+
+# Local config holds your spreadsheet ID
+config.toml
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
