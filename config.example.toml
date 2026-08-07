@@ -22,3 +22,33 @@ followup_days = 14
 # Optional: paths relative to this file. Defaults shown.
 # credentials_file = "credentials.json"
 # token_file = "token.json"
+
+
+# --- Finding new openings (`appliflow find`) --------------------------------
+# Pulls from official public job-board APIs. No API key, no scraping.
+[find]
+# Title must contain one of these. Empty list = no keyword filter.
+keywords = ["data analyst", "data scientist", "business intelligence"]
+
+# Location substring match. "remote" also matches roles flagged remote.
+# Empty list = anywhere.
+locations = ["Jakarta", "Indonesia", "Remote"]
+
+# Ignore postings older than this. 0 = no age limit.
+max_age_days = 30
+
+# Tab the results are written to. Created automatically if missing.
+worksheet = "Openings"
+
+# Company job boards. The token is the company's handle in its careers URL:
+#   boards.greenhouse.io/TOKEN     -> greenhouse
+#   jobs.lever.co/TOKEN            -> lever
+#   jobs.ashbyhq.com/TOKEN         -> ashby
+# Look at a company's careers page to see which one they use.
+greenhouse = []
+lever = []
+ashby = []
+
+# Aggregators of remote roles. No key needed. Set true to include.
+arbeitnow = false
+remoteok = false

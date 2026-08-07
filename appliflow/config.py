@@ -33,6 +33,27 @@ class ConfigError(RuntimeError):
 
 
 @dataclass
+class FindConfig:
+    """Settings for `find`, which discovers openings you have not applied to yet."""
+
+    keywords: list[str] = field(default_factory=list)
+    locations: list[str] = field(default_factory=list)
+    max_age_days: int | None = 30
+    worksheet: str = "Openings"
+    greenhouse: list[str] = field(default_factory=list)
+    lever: list[str] = field(default_factory=list)
+    ashby: list[str] = field(default_factory=list)
+    arbeitnow: bool = False
+    remoteok: bool = False
+
+    @property
+    def has_sources(self) -> bool:
+        return bool(
+            self.greenhouse or self.lever or self.ashby or self.arbeitnow or self.remoteok
+        )
+
+
+@dataclass
 class Config:
     spreadsheet_id: str
     worksheet: str = "Applications"
@@ -41,11 +62,37 @@ class Config:
     gmail_query: str = ""
     credentials_file: Path = field(default_factory=lambda: PROJECT_DIR / "credentials.json")
     token_file: Path = field(default_factory=lambda: PROJECT_DIR / "token.json")
+    find: FindConfig = field(default_factory=FindConfig)
 
     def query(self, lookback_days: int | None = None) -> str:
         if self.gmail_query:
             return self.gmail_query
         return build_default_query(lookback_days or self.lookback_days)
+
+
+def _string_list(value) -> list[str]:
+    """Accept either a TOML array or a single string."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _load_find(data: dict) -> FindConfig:
+    max_age = data.get("max_age_days", 30)
+    return FindConfig(
+        keywords=_string_list(data.get("keywords")),
+        locations=_string_list(data.get("locations")),
+        # 0 or a negative value means "no age limit at all".
+        max_age_days=None if max_age in (None, 0) or int(max_age) < 0 else int(max_age),
+        worksheet=str(data.get("worksheet", "Openings")),
+        greenhouse=_string_list(data.get("greenhouse")),
+        lever=_string_list(data.get("lever")),
+        ashby=_string_list(data.get("ashby")),
+        arbeitnow=bool(data.get("arbeitnow", False)),
+        remoteok=bool(data.get("remoteok", False)),
+    )
 
 
 def load(path: Path | None = None) -> Config:
@@ -68,6 +115,7 @@ def load(path: Path | None = None) -> Config:
     token = data.get("token_file")
 
     return Config(
+        find=_load_find(data.get("find") or {}),
         spreadsheet_id=spreadsheet_id,
         worksheet=str(data.get("worksheet", "Applications")),
         lookback_days=int(data.get("lookback_days", 90)),

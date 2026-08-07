@@ -98,6 +98,45 @@ Tokopedia  -                Applied    2026-06-27   40
 Figma      Product Analyst  Interview  2026-07-12   25
 ```
 
+## Finding new openings
+
+`scan` tracks what you already applied to. `find` is the other half: it searches
+public job-board APIs for roles you have not applied to yet.
+
+```bash
+python -m appliflow find --no-sheet        # print to terminal, no Google needed
+python -m appliflow find --dry-run         # show what would be written
+python -m appliflow find                   # write new rows to the Openings tab
+python -m appliflow find --keyword "data analyst" --days 14
+```
+
+Configure sources under `[find]` in `config.toml`. The token is the company
+handle from its careers URL:
+
+| Their careers page | Put the token under |
+| --- | --- |
+| `boards.greenhouse.io/gitlab` | `greenhouse = ["gitlab"]` |
+| `jobs.lever.co/netflix` | `lever = ["netflix"]` |
+| `jobs.ashbyhq.com/ramp` | `ashby = ["ramp"]` |
+
+Results are de-duplicated against what is already on the sheet, so repeat runs
+only add genuinely new postings. A board that is down or misconfigured prints a
+warning and the rest of the run continues.
+
+### Why these sources and not LinkedIn
+
+These are official, documented, public endpoints. No API key, no login, no
+scraping, and they do not break when a site is redesigned. Scraping LinkedIn or
+JobStreet means violating their terms of service, fighting anti-bot systems, and
+putting your own account credentials in a config file. Not worth it for a tool
+you want to keep working.
+
+The trade-off is honest: coverage depends on which ATS a company uses. Greenhouse
+and Lever are common at global tech companies, less so at Indonesian employers,
+many of whom run their own career pages. Check a company's careers URL before
+adding it.
+
+
 ## The sheet
 
 `init` writes these columns. Anything you type into **Notes** is preserved across scans.

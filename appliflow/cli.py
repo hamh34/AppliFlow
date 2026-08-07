@@ -101,6 +101,84 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def cmd_find(args) -> int:
+    from .openings import dedupe, exclude_known, filter_openings, sort_openings
+    from .sheet import OpeningsSheet
+    from .sources import collect
+
+    config = config_module.load(args.config)
+    settings = config.find
+
+    if not settings.has_sources:
+        print(
+            "No job sources configured. Add company tokens under [find] in "
+            "config.toml - see config.example.toml for the format.",
+            file=sys.stderr,
+        )
+        return 1
+
+    keywords = args.keyword or settings.keywords
+    # --days 0 means "no age limit"; omitting the flag keeps the configured value.
+    max_age = settings.max_age_days if args.days is None else (args.days or None)
+
+    warnings: list[str] = []
+    print("Fetching job boards...")
+    found = collect(settings, on_error=lambda label, msg: warnings.append(f"{label}: {msg}"))
+    for warning in warnings:
+        print(f"  warning: {warning}", file=sys.stderr)
+
+    if not found:
+        print("No postings returned. Check the company tokens in your config.")
+        return 0
+
+    matching = sort_openings(dedupe(filter_openings(
+        found,
+        keywords=keywords,
+        locations=settings.locations,
+        max_age_days=max_age,
+        as_of=date.today(),
+    )))
+    print(f"{len(found)} postings fetched, {len(matching)} match your filters.")
+    if not matching:
+        return 0
+
+    def render(openings):
+        return _table(
+            ["Company", "Title", "Location", "Posted"],
+            [
+                [o.company, o.title, o.location or "-",
+                 o.posted.isoformat() if o.posted else "-"]
+                for o in openings[: args.limit]
+            ],
+        )
+
+    if args.no_sheet:
+        print()
+        print(render(matching))
+        return 0
+
+    creds = get_credentials(config.credentials_file, config.token_file)
+    sheet = OpeningsSheet(creds, config.spreadsheet_id, settings.worksheet)
+    sheet.ensure_tab()
+    sheet.ensure_header()
+
+    fresh = exclude_known(matching, sheet.known_urls())
+    if not fresh:
+        print("Nothing new since the last run.")
+        return 0
+
+    print(f"\n{len(fresh)} new posting(s):\n")
+    print(render(fresh))
+
+    if args.dry_run:
+        print("\nDry run: the sheet was not modified.")
+        return 0
+
+    sheet.append(fresh)
+    print(f"\nAdded {len(fresh)} row(s) to '{settings.worksheet}'.")
+    return 0
+
+
 def cmd_followups(args) -> int:
     config, _, tracker = _connect(args)
     threshold = args.days or config.followup_days
@@ -196,6 +274,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="show changes without writing"
     )
     scan.set_defaults(func=cmd_scan)
+
+    find = subparsers.add_parser("find", help="search job boards for new openings")
+    find.add_argument(
+        "--keyword", action="append", help="title keyword; repeatable, overrides config"
+    )
+    find.add_argument("--days", type=int, help="max posting age; 0 for no limit")
+    find.add_argument("--limit", type=int, default=40, help="max rows to print")
+    find.add_argument(
+        "--no-sheet", action="store_true", help="print results only, skip Google entirely"
+    )
+    find.add_argument("--dry-run", action="store_true", help="show results without writing")
+    find.set_defaults(func=cmd_find)
 
     followups = subparsers.add_parser(
         "followups", help="list applications that have gone quiet"
