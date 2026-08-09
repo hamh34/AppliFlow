@@ -56,60 +56,89 @@ for this.
 
 ## Current state (Aug 2026)
 
-Code is complete and pushed on `main`; **215 tests pass**. Setup on the user's
-machine is not finished.
+Code is complete and pushed on `main`; **239 tests pass**. Setup on the user's
+machine is **finished** — `doctor` is all green, and `find` and `scan` both run
+end to end and write to the spreadsheet.
 
-Remaining steps, in order:
+Remaining work is tuning, not setup:
 
-1. Turn on job alerts at LinkedIn, JobStreet, Glints, Kalibrr, Glassdoor —
-   frequency **Daily**, email delivery on (not just in-app).
-2. Put `config.toml` and `credentials.json` in the repo root.
-   `credentials.json` is the OAuth client JSON downloaded from Google Cloud,
-   renamed from its `client_secret_*.json` download name. It must be a
-   **Desktop app** client; a Web client cannot complete the local browser flow.
-3. `python -m appliflow doctor` — fixes anything marked `[--]`.
-4. `python -m appliflow init` — browser OAuth. Sign in as the account that owns
-   the spreadsheet, or writes will fail confusingly.
-5. Once the first alert email arrives (usually within 24h):
-   `python -m appliflow find --explain --no-sheet`
+- **The upstream alerts are the bottleneck, not the filters.** The most common
+  words across 404 real postings were `consultant`, `analyst`, `intern`,
+  `manager`, `accountant` — not one sustainability term. The board-side alert
+  searches were set up before the ESG focus, so no amount of `keywords` tuning
+  helps; this tool can only filter what the boards send.
+- Glints and Kalibrr sent **zero** emails in a 7-day window. Alerts there are
+  either off or in-app only.
+- Automating a daily run (Windows Task Scheduler) is the last step.
 
-### Known untested risk
+### What real mail actually showed
 
-The link patterns in `alerts.py` were written from knowledge of these sites' URL
-structures and have **never been checked against a real alert email** — the
-environment they were built in blocks those hosts. Titles are likely correct
-(they come from anchor text). **Company and location are the weak spot**: they
-are read from loose text beside the link by `_split_details`, and each board
-arranges it differently.
+The link patterns had never met a real alert email. When they did, the guesses
+recorded here were half wrong, and worth keeping straight:
 
-`find --explain` prints what was extracted from each email so misreads can be
-spotted and the per-board heuristics corrected. That is the intended next
-iteration. The user's mail never needs to leave their machine — the `--explain`
-output is enough to fix the patterns.
+**Titles were right** (anchor text), as predicted. **Company was predicted to be
+the weak spot and was not** — on LinkedIn the `·` separator works and company
+came out right on every row. **Location was the field that broke**, for a reason
+not anticipated: LinkedIn's card decoration (`Actively recruiting`, `Easy
+Apply`, `17 connections`, `10 school alumni`) sits in its own elements, so
+joining the trailing text runs it into the end of the location. Stripped before
+the split now.
 
-**`--explain` prints evidence, not just verdicts**, so one run should be enough
-to correct a heuristic without a second round trip:
+**Glassdoor needed a different parser entirely.** It puts the whole card inside
+the anchor and leaves nothing after the link, so the generic path had no text to
+read and all 200 of its postings came back with no company and no location. The
+card is `<Company> [<rating> ★] <Title> <Location> [badge] [salary] [Easy Apply]
+<age>`; the rating is the only delimiter. Derived from the 180 distinct cards in
+one run: company fills on 149/180 (exactly the rated rows), location on 180/180.
+Cards without a rating keep the employer in the title — no delimiter exists, and
+a guessed boundary is worse than none.
 
-- `split from:` is the exact string `_split_details` was handed. When company or
-  location is wrong, that line says why — the fix is a separator or an ordering
-  rule, and it is visible without the original email.
-- Job-shaped links that produced no row are listed with the reason (boilerplate
-  anchor, empty anchor). A silently dropped posting would otherwise look like a
-  board that simply sent nothing.
-- When an email yields nothing at all, the links it *did* see are grouped by
-  host with samples. A wrong URL pattern cannot be fixed without seeing the URL
-  it failed on.
+**JobStreet cannot be parsed at all**, and this is not a bug to fix. Every link
+goes through `url.jobstreet.com` with the destination inside encrypted path
+segments, not a query parameter, so `unwrap_url` cannot recover a job id and no
+pattern can. Recovering it would mean following redirects over HTTP from inside
+the parser. 11 emails, 0 postings, by design on their side.
+
+**Location filtering costs more than it saves here.** Measured on 392 real
+postings, `locations = ["Jakarta", "Indonesia", "Remote"]` dropped 45, of which
+only 10 were genuinely foreign (Singapore). The rest were Indonesian —
+Tangerang, Bekasi, Bandung, Cikarang, and Jakarta *districts* like Gambir and
+Mampang Prapatan, which contain neither "Jakarta" nor "Indonesia". Chasing that
+with a longer city list does not converge. `locations = []` is the right setting
+while the alerts are already Indonesia-targeted.
+
+### Two failures that cost a whole run
+
+Both hit while capturing `--explain` output on Windows, both after the expensive
+Gmail fetch was already paid for:
+
+- A week of alerts is 82 messages, each its own API call, so one connect timeout
+  is ordinary rather than exceptional — and it discarded all 82. Gmail calls now
+  retry.
+- A redirected stdout on Windows falls back to the ANSI code page, so the first
+  title carrying `★` raised `UnicodeEncodeError` mid-print. Only the *error
+  handler* is overridden, not the encoding: forcing UTF-8 cures the crash but
+  hands PowerShell bytes it decodes with the console code page, turning every
+  bullet in `split from:` into mojibake — the one character a reader most needs.
+
+### How `--explain` earns its keep
+
+It prints evidence, not just verdicts, so one run corrects a heuristic without a
+second round trip:
+
+- `split from:` is the exact string `_split_details` was handed. `(no text found
+  after the link)` is what identified the entire Glassdoor problem in one line.
+- Job-shaped links that produced no row are listed with the reason.
+- When an email yields nothing, the links it *did* see are grouped by host, each
+  with its anchor text — because when a URL is an opaque redirect, the anchor is
+  all that is left to build a posting from.
 
 `redact_url` scrubs every URL on the way out: tracking parameter values, opaque
 path segments, and email addresses go, while numeric job ids and parameter
-*names* stay. So `--explain` output is safe to paste elsewhere — that is the
-point, since the person fixing a pattern may not be the mailbox's owner. A board
-hiding its id in an unexpected parameter still shows as `?vacancyId=<redacted>`,
-which names what to ask for.
+*names* stay. So the output is safe to paste elsewhere — a board hiding its id
+in an unexpected parameter still shows as `?vacancyId=<redacted>`, which names
+what to ask for.
 
-One defect this surfaced before any real mail arrived: `senders` accepted
-`jobstreet.com` while the link pattern only matched `jobstreet.co.id`, so alerts
-from `id.jobstreet.com` were fetched and then parsed to nothing. Fixed, with
-both domains canonicalizing to one URL so dedupe still collapses them. Worth
-re-checking the other four boards the same way against real mail — an
+One defect this surfaced *before* any real mail arrived: `senders` accepted
+`jobstreet.com` while the link pattern only matched `jobstreet.co.id`. An
 inconsistency between `senders` and `pattern` is invisible until an email lands.
