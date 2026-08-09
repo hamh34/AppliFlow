@@ -156,6 +156,12 @@ def parse_message(raw: dict, include_html: bool = False) -> Message:
     )
 
 
+# One run fetches every matching message individually, so a week of alerts is
+# hundreds of sequential calls. At that length a single dropped connection is
+# ordinary, and without retries it discards every message already fetched.
+API_RETRIES = 5
+
+
 def fetch_messages(
     creds, query: str, max_results: int = 500, include_html: bool = False
 ) -> list[Message]:
@@ -168,13 +174,16 @@ def fetch_messages(
     ids: list[str] = []
     request = messages.list(userId="me", q=query, maxResults=min(max_results, 500))
     while request is not None and len(ids) < max_results:
-        response = request.execute()
+        response = request.execute(num_retries=API_RETRIES)
         ids.extend(item["id"] for item in response.get("messages", []))
         request = messages.list_next(request, response)
 
     parsed: list[Message] = []
     for message_id in ids[:max_results]:
-        raw = messages.get(userId="me", id=message_id, format="full").execute()
+        raw = (
+            messages.get(userId="me", id=message_id, format="full")
+            .execute(num_retries=API_RETRIES)
+        )
         parsed.append(parse_message(raw, include_html=include_html))
 
     # Oldest first so a later email can advance the status a earlier one set.

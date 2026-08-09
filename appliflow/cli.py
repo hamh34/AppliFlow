@@ -510,7 +510,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configure_output() -> None:
+    """Keep output printable when the terminal's encoding cannot hold it.
+
+    Job titles carry whatever characters the board felt like using -- a star
+    rating, a bullet, an en dash. On Windows a redirected stdout falls back to
+    the ANSI code page, where one such character raises UnicodeEncodeError and
+    takes the whole run down, after the Gmail fetch has already been paid for.
+    Redirecting `--explain` to a file is exactly when that happens, and exactly
+    when losing the run hurts most.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            # Not a reconfigurable stream (a pytest capture, a pipe someone
+            # else owns). Printing is best-effort; never fail here.
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_output()
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
