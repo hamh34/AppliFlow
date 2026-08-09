@@ -56,8 +56,8 @@ for this.
 
 ## Current state (Aug 2026)
 
-Code is complete and pushed on branch `AppliFlow`; **214 tests pass**. Setup on
-the user's machine is not finished.
+Code is complete and pushed on `main`; **215 tests pass**. Setup on the user's
+machine is not finished.
 
 Remaining steps, in order:
 

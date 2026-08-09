@@ -21,7 +21,7 @@ Gmail access is read-only. The tool never sends, deletes, or modifies mail.
 ### 1. Install
 
 ```bash
-cd Stack-and-Tools
+cd AppliFlow
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 # source .venv/bin/activate   # macOS / Linux
@@ -257,7 +257,7 @@ python -m pytest
 ## Layout
 
 ```
-Stack-and-Tools/   (branch: AppliFlow)
+AppliFlow/
 ├── appliflow/
 │   ├── classify.py   # email text -> status, company, role
 │   ├── records.py    # Application record, merge rules, matching
