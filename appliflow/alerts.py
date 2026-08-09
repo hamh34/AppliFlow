@@ -31,6 +31,35 @@ _CHROME = {
     "settings", "manage alerts", "see more",
 }
 
+# Recommendation links point at a real job URL but are not a posting in this
+# alert -- their anchor names a *different* job. Matched by prefix because the
+# rest of the text varies with whatever job is being recommended.
+_CHROME_PREFIXES = (
+    "jobs similar to",
+    "similar jobs",
+    "more jobs at",
+    "see jobs at",
+)
+
+# Card decoration LinkedIn places after the location. It arrives in its own
+# elements, so joining the text runs it straight into the location instead of
+# leaving it as a separate field to split off. Every alternative below was
+# taken from real alert mail, not guessed.
+_CARD_NOISE = re.compile(
+    r"\s*(?:"
+    r"actively\s+recruiting"
+    r"|easy\s+apply"
+    r"|be\s+an\s+early\s+applicant"
+    r"|\d+\s+connections?"
+    r"|\d+\s+school\s+alum(?:ni)?"
+    r"|\d+\s+alum(?:ni)?"
+    r")\b",
+    re.I,
+)
+
+# LinkedIn marks the work arrangement in parentheses after the location.
+_ARRANGEMENT = re.compile(r"\((remote|hybrid|on-?site)\)", re.I)
+
 
 @dataclass(frozen=True)
 class Board:
@@ -222,17 +251,26 @@ def _clean(text: str) -> str:
 
 
 def _looks_like_chrome(text: str) -> bool:
-    return _clean(text).lower() in _CHROME
+    cleaned = _clean(text).lower()
+    if cleaned in _CHROME:
+        return True
+    return any(cleaned.startswith(prefix) for prefix in _CHROME_PREFIXES)
+
+
+def _strip_card_noise(text: str) -> str:
+    """Remove the recruiting-card decoration that runs into the location."""
+    return _clean(_CARD_NOISE.sub(" ", text))
 
 
 def _split_details(after: str, board_name: str) -> tuple[str, str]:
     """Guess (company, location) from the text following a job link.
 
-    Boards separate these with a bullet, dash, pipe, or line break. This is the
-    softest part of the parser by a wide margin -- `--explain` exists so the
-    guesses can be checked against real mail and corrected.
+    Boards separate these with a bullet, dash, pipe, or line break. Real mail
+    showed the separators work: company comes out clean. What did not work was
+    the tail -- "Jakarta, Indonesia (On-site) 17 connections Easy Apply" -- so
+    the card decoration is stripped before splitting, not after.
     """
-    text = _clean(after)
+    text = _strip_card_noise(after)
     if not text:
         return "", ""
     parts = [p.strip() for p in re.split(r"\s*[·•|]\s*|\s+[-–]\s+", text) if p.strip()]
@@ -317,6 +355,12 @@ def analyze_html(html: str, *, source_label: str = "alert") -> list[LinkReport]:
             if slug:
                 company = slug.group(1).replace("-", " ").title()
 
+        # "(Remote)" beside the location is the only remote signal an alert
+        # carries; without this the flag stays False and a `locations =
+        # ["Remote"]` filter can never match an alert posting.
+        arrangement = _ARRANGEMENT.search(trailing)
+        remote = bool(arrangement) and arrangement.group(1).lower() == "remote"
+
         reports.append(
             LinkReport(
                 href=href,
@@ -329,6 +373,7 @@ def analyze_html(html: str, *, source_label: str = "alert") -> list[LinkReport]:
                     location=location,
                     url=canonical,
                     source=f"{source_label}:{board.name}",
+                    remote=remote,
                 ),
             )
         )

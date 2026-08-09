@@ -171,6 +171,89 @@ class TestOpeningsFromMessages:
         assert openings_from_messages([message]) == []
 
 
+class TestRealLinkedInCards:
+    """Strings taken verbatim from a real LinkedIn alert, first run.
+
+    Company came out right on every row; the location did not, because
+    LinkedIn's card decoration sits in its own elements and joins onto the end
+    of it. These are the exact tails that arrived.
+    """
+
+    @pytest.mark.parametrize(
+        "trailing, company, location",
+        [
+            (
+                "Xurya Daya Indonesia · South Jakarta (Hybrid) Actively recruiting Easy Apply",
+                "Xurya Daya Indonesia",
+                "South Jakarta (Hybrid)",
+            ),
+            (
+                "Deloitte · Jakarta, Indonesia (On-site) 17 connections Easy Apply",
+                "Deloitte",
+                "Jakarta, Indonesia (On-site)",
+            ),
+            (
+                "UNDP Careers · Jakarta Actively recruiting",
+                "UNDP Careers",
+                "Jakarta",
+            ),
+            (
+                "PT HM Sampoerna Tbk. · Surabaya, East Java, Indonesia 1 connection",
+                "PT HM Sampoerna Tbk.",
+                "Surabaya, East Java, Indonesia",
+            ),
+            (
+                "PT. Softex Indonesia · West Karawang, West Java, Indonesia "
+                "10 school alumni Easy Apply",
+                "PT. Softex Indonesia",
+                "West Karawang, West Java, Indonesia",
+            ),
+            (
+                "ORIMBA · Jakarta Metropolitan Area 1 school alum",
+                "ORIMBA",
+                "Jakarta Metropolitan Area",
+            ),
+            (
+                "MR.D.I.Y. Indonesia · Jakarta, Jakarta, Indonesia 9 school alumni",
+                "MR.D.I.Y. Indonesia",
+                "Jakarta, Jakarta, Indonesia",
+            ),
+        ],
+    )
+    def test_location_survives_the_card_decoration(self, trailing, company, location):
+        html = alert("https://www.linkedin.com/jobs/view/1", "ESG Specialist", trailing)
+        opening = openings_from_html(html)[0]
+        assert opening.company == company
+        assert opening.location == location
+
+    def test_recommendation_links_are_not_postings(self):
+        """'Jobs similar to X' points at a job URL but is not this alert's job."""
+        html = alert(
+            "https://www.linkedin.com/jobs/view/9",
+            "Jobs similar to Sustainability Intern at MSD",
+        )
+        assert openings_from_html(html) == []
+
+    def test_remote_arrangement_sets_the_flag(self):
+        html = alert("https://www.linkedin.com/jobs/view/1", "ESG Analyst",
+                     "ORIMBA · Jakarta (Remote) Easy Apply")
+        opening = openings_from_html(html)[0]
+        assert opening.remote is True
+
+    def test_onsite_arrangement_does_not_set_the_flag(self):
+        html = alert("https://www.linkedin.com/jobs/view/1", "ESG Analyst",
+                     "Deloitte · Jakarta, Indonesia (On-site)")
+        assert openings_from_html(html)[0].remote is False
+
+    def test_a_cleaned_location_now_passes_a_jakarta_filter(self):
+        """The point of the fix: these rows become filterable again."""
+        from appliflow.openings import matches_locations
+
+        html = alert("https://www.linkedin.com/jobs/view/1", "ESG Specialist",
+                     "ORIMBA · Jakarta Metropolitan Area 1 school alum")
+        assert matches_locations(openings_from_html(html)[0], ["Jakarta"])
+
+
 class TestRedactUrl:
     """`--explain` output is meant to be shared, so it must not carry tokens."""
 
