@@ -254,6 +254,102 @@ class TestRealLinkedInCards:
         assert matches_locations(openings_from_html(html)[0], ["Jakarta"])
 
 
+class TestGlassdoorCards:
+    """Anchor text taken verbatim from a real Glassdoor alert.
+
+    Glassdoor puts the entire card inside the anchor and leaves nothing after
+    the link, so the generic path produced 200 postings with no company and no
+    location, and a title carrying the rating, the location and the age.
+    """
+
+    def card(self, anchor):
+        html = f'<a href="https://www.glassdoor.com/partner/jobListing.htm?jobListingId=1">{anchor}</a>'
+        return openings_from_html(html)[0]
+
+    @pytest.mark.parametrize(
+        "anchor, company, location, title",
+        [
+            (
+                "Sephora 3.7 ★ Accounts Payable Accountant (SEA Team) Jakarta 5d",
+                "Sephora", "Jakarta", "Accounts Payable Accountant (SEA Team)",
+            ),
+            (
+                "Standard Chartered Bank 3.7 ★ Fund Accountant Jakarta 2d",
+                "Standard Chartered Bank", "Jakarta", "Fund Accountant",
+            ),
+            (
+                "UNDP 4.0 ★ Sustainable Trade and Market Partnerships Analyst "
+                "[Open to internal and external applicants] Indonesia 1d",
+                "UNDP", "Indonesia",
+                "Sustainable Trade and Market Partnerships Analyst "
+                "[Open to internal and external applicants]",
+            ),
+            (
+                "World Resources Institute 4.1 ★ Industrial Park Analyst Jakarta 3d",
+                "World Resources Institute", "Jakarta", "Industrial Park Analyst",
+            ),
+            (
+                "Mastercard 4.1 ★ Associate Managing Consultant – Deploy Jakarta "
+                "Best Place to Work 4d",
+                "Mastercard", "Jakarta", "Associate Managing Consultant – Deploy",
+            ),
+            (
+                "Nokia 4.0 ★ Business Operations Co-Ordinator and Analyst Indonesia "
+                "Best-Led Company 6d",
+                "Nokia", "Indonesia", "Business Operations Co-Ordinator and Analyst",
+            ),
+        ],
+    )
+    def test_splits_a_rated_card(self, anchor, company, location, title):
+        opening = self.card(anchor)
+        assert opening.company == company
+        assert opening.location == location
+        assert opening.title == title
+
+    @pytest.mark.parametrize(
+        "anchor, location, title",
+        [
+            (
+                "PT Green City Traffic Finance, Accounting, Tax Manager Indonesia "
+                "IDR 24M - IDR 30M ( Employer est. ) Easy Apply 2d",
+                "Indonesia",
+                "PT Green City Traffic Finance, Accounting, Tax Manager",
+            ),
+            (
+                "PT MINTONG OVERSEAS ACCOUNTANT (MANDARIN SPEAKER) Indonesia "
+                "IDR 8M - IDR 12M ( Employer est. ) Easy Apply 2d",
+                "Indonesia",
+                "PT MINTONG OVERSEAS ACCOUNTANT (MANDARIN SPEAKER)",
+            ),
+        ],
+    )
+    def test_unrated_cards_keep_the_company_in_the_title(self, anchor, location, title):
+        """Without a rating there is no delimiter, so no boundary is invented.
+
+        The salary and the apply badge still come off, and the title still
+        matches keywords -- it just carries the employer name with it.
+        """
+        opening = self.card(anchor)
+        assert opening.company == ""
+        assert opening.location == location
+        assert opening.title == title
+
+    def test_just_posted_is_an_age_not_a_location(self):
+        opening = self.card("Grab 4.2 ★ ESG Analyst Jakarta Just posted")
+        assert opening.title == "ESG Analyst"
+        assert opening.location == "Jakarta"
+
+    def test_an_unknown_place_leaves_the_location_empty(self):
+        """A gap in the gazetteer costs a blank cell, never the posting."""
+        opening = self.card("Acme 4.0 ★ ESG Analyst Reykjavik 2d")
+        assert opening.company == "Acme"
+        assert opening.location == ""
+        assert "Reykjavik" in opening.title
+
+    def test_a_remote_card_sets_the_flag(self):
+        assert self.card("Acme 4.0 ★ ESG Analyst Remote 2d").remote is True
+
+
 class TestRedactUrl:
     """`--explain` output is meant to be shared, so it must not carry tokens."""
 

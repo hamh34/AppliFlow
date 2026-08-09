@@ -60,6 +60,42 @@ _CARD_NOISE = re.compile(
 # LinkedIn marks the work arrangement in parentheses after the location.
 _ARRANGEMENT = re.compile(r"\((remote|hybrid|on-?site)\)", re.I)
 
+# --- Glassdoor ------------------------------------------------------------
+# Glassdoor puts the whole card inside the anchor and leaves nothing after the
+# link, so `_split_details` has no text to work with and every field but the
+# title came back empty. The card reads:
+#
+#   <Company> [<rating> ★] <Title> <Location> [badge] [salary] [Easy Apply] <age>
+#
+# The rating is the only reliable delimiter, and it is present on most rows.
+_GD_RATING = re.compile(r"^(?P<company>.+?)\s+\d\.\d\s*★\s*(?P<rest>.+)$")
+_GD_AGE = re.compile(r"\s+(?:\d+[dhm]|just\s+posted)$", re.I)
+_GD_NOISE = re.compile(
+    r"\s*(?:"
+    r"easy\s+apply"
+    r"|\(\s*(?:employer|glassdoor)\s+est\.?\s*\)"
+    r"|best\s+places?\s+to\s+work"
+    r"|best-?led\s+compan(?:y|ies)"
+    r"|top\s+compan(?:y|ies)"
+    r"|idr\s*[\d.,]+\s*[mkb]?(?:\s*-\s*idr\s*[\d.,]+\s*[mkb]?)?"
+    r")\s*",
+    re.I,
+)
+
+# Where the location ends and the title begins is not marked, so the tail is
+# matched against places instead of guessed. An unrecognised tail leaves the
+# location empty, which now passes the filters rather than dropping the row --
+# so a missing entry here costs a blank cell, never a posting.
+_PLACES = (
+    "kuala lumpur", "ho chi minh city", "jakarta selatan", "jakarta utara",
+    "jakarta barat", "jakarta timur", "jakarta pusat", "south jakarta",
+    "north jakarta", "west jakarta", "east jakarta", "central jakarta",
+    "jakarta", "indonesia", "tangerang", "karawang", "cikarang", "bekasi",
+    "depok", "bogor", "bandung", "surabaya", "semarang", "yogyakarta",
+    "denpasar", "makassar", "palembang", "medan", "batam", "malang",
+    "ciracas", "bali", "singapore", "bangkok", "manila", "hanoi", "remote",
+)
+
 
 @dataclass(frozen=True)
 class Board:
@@ -262,6 +298,43 @@ def _strip_card_noise(text: str) -> str:
     return _clean(_CARD_NOISE.sub(" ", text))
 
 
+def _trailing_place(text: str) -> tuple[str, str]:
+    """Split a trailing place name off the end. Returns (remainder, place)."""
+    lowered = text.lower()
+    for place in _PLACES:
+        if not lowered.endswith(place):
+            continue
+        head = text[: len(text) - len(place)].rstrip(" ,-·")
+        if head:  # A row that is only a place name has no title; leave it be.
+            return head, text[len(text) - len(place):]
+    return text, ""
+
+
+def glassdoor_card(anchor: str) -> tuple[str, str, str]:
+    """Split Glassdoor's single-anchor card into (title, company, location).
+
+    Company is taken from before the star rating, the only delimiter the card
+    offers. Rows without a rating keep the company inside the title -- there is
+    nothing to split on, and inventing a boundary would be worse than leaving
+    it, since the title still matches keywords either way.
+    """
+    text = _clean(anchor)
+    company = ""
+    rated = _GD_RATING.match(text)
+    if rated:
+        company = rated.group("company").strip()
+        text = rated.group("rest").strip()
+
+    # Age and badges can stack in either order, so strip until nothing changes.
+    previous = None
+    while previous != text:
+        previous = text
+        text = _clean(_GD_NOISE.sub(" ", _GD_AGE.sub("", text)))
+
+    title, location = _trailing_place(text)
+    return title, company, location
+
+
 def _split_details(after: str, board_name: str) -> tuple[str, str]:
     """Guess (company, location) from the text following a job link.
 
@@ -348,7 +421,13 @@ def analyze_html(html: str, *, source_label: str = "alert") -> list[LinkReport]:
             )
             continue
 
-        company, location = _split_details(trailing, board.name)
+        if board.name == "glassdoor":
+            # The card is the anchor, not the text beside it.
+            title, company, location = glassdoor_card(anchor)
+        else:
+            title = anchor
+            company, location = _split_details(trailing, board.name)
+
         if board.name == "kalibrr" and not company:
             # Kalibrr puts the employer slug in the URL itself.
             slug = re.search(r"/c/([^/]+)/", canonical)
@@ -358,8 +437,10 @@ def analyze_html(html: str, *, source_label: str = "alert") -> list[LinkReport]:
         # "(Remote)" beside the location is the only remote signal an alert
         # carries; without this the flag stays False and a `locations =
         # ["Remote"]` filter can never match an alert posting.
-        arrangement = _ARRANGEMENT.search(trailing)
-        remote = bool(arrangement) and arrangement.group(1).lower() == "remote"
+        arrangement = _ARRANGEMENT.search(trailing) or _ARRANGEMENT.search(anchor)
+        remote = (bool(arrangement) and arrangement.group(1).lower() == "remote") or (
+            location.lower() == "remote"
+        )
 
         reports.append(
             LinkReport(
@@ -369,7 +450,7 @@ def analyze_html(html: str, *, source_label: str = "alert") -> list[LinkReport]:
                 board=board.name,
                 opening=Opening(
                     company=company,
-                    title=anchor,
+                    title=title,
                     location=location,
                     url=canonical,
                     source=f"{source_label}:{board.name}",

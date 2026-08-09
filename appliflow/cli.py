@@ -519,10 +519,16 @@ def _configure_output() -> None:
     takes the whole run down, after the Gmail fetch has already been paid for.
     Redirecting `--explain` to a file is exactly when that happens, and exactly
     when losing the run hurts most.
+
+    Only the error handler is changed, not the encoding. Forcing UTF-8 stops
+    the crash but hands PowerShell bytes it decodes with the console code page,
+    turning every bullet into mojibake -- and the bullet in `split from:` is
+    the character a reader most needs to see. Replacing just the handful of
+    characters the terminal genuinely cannot represent keeps the rest exact.
     """
     for stream in (sys.stdout, sys.stderr):
         try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            stream.reconfigure(errors="replace")
         except (AttributeError, ValueError, OSError):
             # Not a reconfigurable stream (a pytest capture, a pipe someone
             # else owns). Printing is best-effort; never fail here.
