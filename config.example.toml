@@ -68,6 +68,20 @@ keywords = [
     "valuation",
     "fixed income",
 
+    # --- Fresh-graduate entry programs -------------------------------------
+    # Indonesian corporates hire graduates through named programs rather than
+    # by role, so these titles carry no clue about the actual work. One entry
+    # covers the whole family: Officer / Management / Graduate / Banking /
+    # Leadership Development Program all end the same way.
+    "development program",
+    "program pengembangan",   # e.g. Program Pengembangan Staf (PPS)
+    "trainee",                # Management Trainee, Graduate Trainee
+    "graduate",               # Graduate Program, Fresh Graduate
+    "management associate",
+    "future leader",
+    "odp",                    # written as an acronym as often as spelled out
+    "mdp",
+
     # --- Broad: highest recall, highest noise. Trim these first. -----------
     "analyst",        # also Data / Business / Credit / QA / SOC Analyst
     "analis",
@@ -75,6 +89,13 @@ keywords = [
     "keuangan",
     "risk",
     "risiko",
+
+    # "officer" is deliberately left off. Every Officer role worth having is
+    # already matched by a stem above -- ESG Officer by "esg", Sustainability
+    # Officer by "sustainab", Risk/Finance/Investment/Research Officer by
+    # theirs. All it adds is Security, Loan, HR, Compliance, Marketing,
+    # Procurement and Admin Officer. Uncomment if you want that trade anyway.
+    # "officer",
 ]
 
 # Location substring match. "remote" also matches roles flagged remote.
