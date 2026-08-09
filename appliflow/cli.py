@@ -101,6 +101,35 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def _explain_alerts(messages) -> None:
+    """Show what was pulled out of each alert email, so misreads are visible.
+
+    Nothing leaves the machine: this prints locally so you can compare the
+    parser's guesses against the mail in front of you and report what is wrong.
+    """
+    from .alerts import openings_from_html
+
+    print("\n--- alert parsing detail ---")
+    for message in messages:
+        openings = openings_from_html(message.html)
+        received = message.received.isoformat() if message.received else "unknown date"
+        print(f"\n{message.sender_email} | {received}")
+        print(f"  subject: {message.subject[:70]}")
+        if not message.html:
+            print("  (no HTML part found in this email)")
+            continue
+        if not openings:
+            print("  no job links matched -- send this sender/subject over so the "
+                  "pattern can be added")
+            continue
+        for opening in openings:
+            print(f"  - title:    {opening.title}")
+            print(f"    company:  {opening.company or '(not found)'}")
+            print(f"    location: {opening.location or '(not found)'}")
+            print(f"    source:   {opening.source}")
+    print("\n--- end detail ---\n")
+
+
 def cmd_find(args) -> int:
     from .openings import dedupe, exclude_known, filter_openings, sort_openings
     from .sheet import OpeningsSheet
@@ -121,9 +150,45 @@ def cmd_find(args) -> int:
     # --days 0 means "no age limit"; omitting the flag keeps the configured value.
     max_age = settings.max_age_days if args.days is None else (args.days or None)
 
+    # Google auth is needed for alerts, for the sheet, or for both. Fetch it at
+    # most once, and only if something actually asks for it.
+    cached: dict = {}
+
+    def credentials():
+        if "creds" not in cached:
+            cached["creds"] = get_credentials(config.credentials_file, config.token_file)
+        return cached["creds"]
+
     warnings: list[str] = []
-    print("Fetching job boards...")
-    found = collect(settings, on_error=lambda label, msg: warnings.append(f"{label}: {msg}"))
+    found = []
+
+    if any([settings.greenhouse, settings.lever, settings.ashby,
+            settings.arbeitnow, settings.remoteok]):
+        print("Fetching job boards...")
+        found = collect(
+            settings, on_error=lambda label, msg: warnings.append(f"{label}: {msg}")
+        )
+
+    if settings.alerts.enabled:
+        from .alerts import gmail_query, openings_from_messages
+        from .gmail import fetch_messages
+
+        print("Reading job alerts from Gmail...")
+        try:
+            messages = fetch_messages(
+                credentials(),
+                gmail_query(settings.alerts.lookback_days, settings.alerts.boards),
+                max_results=settings.alerts.max_emails,
+                include_html=True,
+            )
+            from_alerts = openings_from_messages(messages)
+            print(f"  {len(messages)} alert email(s), {len(from_alerts)} posting(s) linked.")
+            if args.explain:
+                _explain_alerts(messages)
+            found.extend(from_alerts)
+        except AuthError as exc:
+            warnings.append(f"alerts: {exc}")
+
     for warning in warnings:
         print(f"  warning: {warning}", file=sys.stderr)
 
@@ -157,8 +222,7 @@ def cmd_find(args) -> int:
         print(render(matching))
         return 0
 
-    creds = get_credentials(config.credentials_file, config.token_file)
-    sheet = OpeningsSheet(creds, config.spreadsheet_id, settings.worksheet)
+    sheet = OpeningsSheet(credentials(), config.spreadsheet_id, settings.worksheet)
     sheet.ensure_tab()
     sheet.ensure_header()
 
@@ -285,6 +349,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-sheet", action="store_true", help="print results only, skip Google entirely"
     )
     find.add_argument("--dry-run", action="store_true", help="show results without writing")
+    find.add_argument(
+        "--explain",
+        action="store_true",
+        help="show what was parsed out of each alert email, to spot misreads",
+    )
     find.set_defaults(func=cmd_find)
 
     followups = subparsers.add_parser(

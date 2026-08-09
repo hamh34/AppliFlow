@@ -33,6 +33,17 @@ class ConfigError(RuntimeError):
 
 
 @dataclass
+class AlertConfig:
+    """Reading openings out of job-alert emails already in your inbox."""
+
+    enabled: bool = False
+    lookback_days: int = 7
+    # Empty means every board AppliFlow knows how to parse.
+    boards: list[str] = field(default_factory=list)
+    max_emails: int = 200
+
+
+@dataclass
 class FindConfig:
     """Settings for `find`, which discovers openings you have not applied to yet."""
 
@@ -45,11 +56,17 @@ class FindConfig:
     ashby: list[str] = field(default_factory=list)
     arbeitnow: bool = False
     remoteok: bool = False
+    alerts: AlertConfig = field(default_factory=AlertConfig)
 
     @property
     def has_sources(self) -> bool:
         return bool(
-            self.greenhouse or self.lever or self.ashby or self.arbeitnow or self.remoteok
+            self.greenhouse
+            or self.lever
+            or self.ashby
+            or self.arbeitnow
+            or self.remoteok
+            or self.alerts.enabled
         )
 
 
@@ -79,9 +96,19 @@ def _string_list(value) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _load_alerts(data: dict) -> AlertConfig:
+    return AlertConfig(
+        enabled=bool(data.get("enabled", False)),
+        lookback_days=max(1, int(data.get("lookback_days", 7))),
+        boards=_string_list(data.get("boards")),
+        max_emails=max(1, int(data.get("max_emails", 200))),
+    )
+
+
 def _load_find(data: dict) -> FindConfig:
     max_age = data.get("max_age_days", 30)
     return FindConfig(
+        alerts=_load_alerts(data.get("alerts") or {}),
         keywords=_string_list(data.get("keywords")),
         locations=_string_list(data.get("locations")),
         # 0 or a negative value means "no age limit at all".

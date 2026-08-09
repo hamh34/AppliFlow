@@ -25,6 +25,9 @@ class Message:
     sender_email: str
     received: date | None
     body: str
+    # Raw HTML, populated only when asked for. Job-alert parsing needs the
+    # `href` attributes that `body` throws away, and needs them untruncated.
+    html: str = ""
 
 
 def _decode(data: str) -> str:
@@ -81,6 +84,27 @@ def _extract_body(payload: dict) -> str:
     return ""
 
 
+def extract_html(payload: dict) -> str:
+    """Return the message's HTML parts unmodified.
+
+    `_extract_body` strips tags and truncates, which is right for classifying
+    prose but destroys links. Job alerts carry their payload in `href`
+    attributes, so they need the markup intact and uncut.
+    """
+    html: list[str] = []
+
+    def walk(part: dict) -> None:
+        mime = (part.get("mimeType") or "").lower()
+        data = (part.get("body") or {}).get("data", "")
+        if data and mime.startswith("text/html"):
+            html.append(_decode(data))
+        for child in part.get("parts") or []:
+            walk(child)
+
+    walk(payload or {})
+    return "".join(html)
+
+
 def _header(headers: list[dict], name: str) -> str:
     target = name.lower()
     for header in headers or []:
@@ -108,8 +132,12 @@ def _received_date(raw: dict, headers: list[dict]) -> date | None:
     return None
 
 
-def parse_message(raw: dict) -> Message:
-    """Turn a Gmail API message resource into a flat record."""
+def parse_message(raw: dict, include_html: bool = False) -> Message:
+    """Turn a Gmail API message resource into a flat record.
+
+    `include_html` is off by default so `scan` keeps its existing shape and
+    memory profile; only alert parsing pays for the raw markup.
+    """
     payload = raw.get("payload") or {}
     headers = payload.get("headers") or []
 
@@ -124,10 +152,13 @@ def parse_message(raw: dict) -> Message:
         sender_email=sender_email.strip(),
         received=_received_date(raw, headers),
         body=body[:BODY_CHAR_LIMIT],
+        html=extract_html(payload) if include_html else "",
     )
 
 
-def fetch_messages(creds, query: str, max_results: int = 500) -> list[Message]:
+def fetch_messages(
+    creds, query: str, max_results: int = 500, include_html: bool = False
+) -> list[Message]:
     """Search Gmail and return parsed messages, oldest first."""
     from googleapiclient.discovery import build
 
@@ -144,7 +175,7 @@ def fetch_messages(creds, query: str, max_results: int = 500) -> list[Message]:
     parsed: list[Message] = []
     for message_id in ids[:max_results]:
         raw = messages.get(userId="me", id=message_id, format="full").execute()
-        parsed.append(parse_message(raw))
+        parsed.append(parse_message(raw, include_html=include_html))
 
     # Oldest first so a later email can advance the status a earlier one set.
     parsed.sort(key=lambda m: (m.received or date.min, m.message_id))

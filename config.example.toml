@@ -52,3 +52,20 @@ ashby = []
 # Aggregators of remote roles. No key needed. Set true to include.
 arbeitnow = false
 remoteok = false
+
+# Read openings out of job-alert emails already in your inbox.
+# Set up alerts on LinkedIn / JobStreet / Glints / Kalibrr / Glassdoor first,
+# with frequency set to Daily and email delivery (not just in-app) turned on.
+# Uses the Gmail access AppliFlow already has - no new permission needed.
+[find.alerts]
+enabled = false
+
+# How far back to search your inbox each run.
+lookback_days = 7
+
+# Limit to specific boards, e.g. ["linkedin", "kalibrr"].
+# Empty = every board AppliFlow can parse.
+boards = []
+
+# Cap on alert emails read per run.
+max_emails = 200

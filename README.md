@@ -123,13 +123,54 @@ Results are de-duplicated against what is already on the sheet, so repeat runs
 only add genuinely new postings. A board that is down or misconfigured prints a
 warning and the rest of the run continues.
 
+### Reading job alerts from your inbox
+
+ATS coverage is good for global tech companies and thin for Indonesian
+employers, many of whom only post to LinkedIn, JobStreet, Glints, Kalibrr, or
+Glassdoor. Those sites have no public API, and scraping them means violating
+their terms and risking your own account.
+
+All of them will email you new postings if you set up a job alert. Those emails
+are in your inbox, so reading them needs no scraping and no login. Turn on
+`[find.alerts]` in `config.toml` and `find` picks them up alongside the APIs.
+
+```bash
+python -m appliflow find --explain --no-sheet   # show what was read from each email
+```
+
+Set your alerts to **Daily** (not weekly) and make sure **email** delivery is
+on, not just in-app notifications.
+
+Two honest limits: alerts arrive daily rather than in real time, and they
+usually list only the top matches rather than everything. Good enough for a job
+hunt, but not a complete or instant feed.
+
+#### How the parsing survives redesigns
+
+Alert emails are parsed by **link pattern, not by template**. Rather than
+looking for a particular `<div>`, it finds links pointing at a job-URL shape
+(`linkedin.com/jobs/view/<id>`) and reads the anchor text as the title. A board
+can redesign its email freely; as long as the links still point at jobs, this
+keeps working.
+
+Job IDs come out of the URL, so click-tracking parameters cannot create
+duplicates -- the same posting in Monday's and Tuesday's alert collapses to one
+row.
+
+Company and location are the soft spot: they sit in loose text next to the
+link, and every board arranges it differently. That is what `--explain` is for
+-- it prints what was extracted so you can spot a misread and report it. Your
+mail stays on your machine.
+
+
 ### Why these sources and not LinkedIn
 
 These are official, documented, public endpoints. No API key, no login, no
 scraping, and they do not break when a site is redesigned. Scraping LinkedIn or
 JobStreet means violating their terms of service, fighting anti-bot systems, and
 putting your own account credentials in a config file. Not worth it for a tool
-you want to keep working.
+you want to keep working -- and unnecessary, since those boards will email you
+the same postings (see above).
 
 The trade-off is honest: coverage depends on which ATS a company uses. Greenhouse
 and Lever are common at global tech companies, less so at Indonesian employers,

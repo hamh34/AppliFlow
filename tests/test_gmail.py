@@ -111,3 +111,77 @@ def test_handles_missing_payload():
     assert parsed.subject == ""
     assert parsed.sender_email == ""
     assert parsed.body == ""
+
+
+# --- Raw HTML extraction, used by job-alert parsing --------------------------
+# `_extract_body` strips tags and truncates, which destroys the links alerts
+# carry. These cover the separate path that keeps the markup intact.
+
+HTML_BODY = '<html><body><a href="https://jobs.example/view/1">Data Analyst</a></body></html>'
+
+
+def test_extract_html_keeps_href_attributes():
+    from appliflow.gmail import extract_html
+
+    raw = message(mime="text/html", body_data=encode(HTML_BODY))
+    assert 'href="https://jobs.example/view/1"' in extract_html(raw["payload"])
+
+
+def test_extract_html_walks_nested_multipart():
+    from appliflow.gmail import extract_html
+
+    raw = message(
+        mime="multipart/alternative",
+        parts=[
+            {"mimeType": "text/plain", "body": {"data": encode("plain version")}},
+            {
+                "mimeType": "multipart/related",
+                "parts": [{"mimeType": "text/html", "body": {"data": encode(HTML_BODY)}}],
+            },
+        ],
+    )
+    assert "Data Analyst" in extract_html(raw["payload"])
+
+
+def test_extract_html_ignores_plain_text_parts():
+    from appliflow.gmail import extract_html
+
+    raw = message(mime="text/plain", body_data=encode("no markup here"))
+    assert extract_html(raw["payload"]) == ""
+
+
+def test_extract_html_on_empty_payload():
+    from appliflow.gmail import extract_html
+
+    assert extract_html({}) == ""
+    assert extract_html(None) == ""
+
+
+def test_html_is_empty_unless_requested():
+    """Regression: `scan` must not start carrying raw markup around."""
+    raw = message(mime="text/html", body_data=encode(HTML_BODY))
+    assert parse_message(raw).html == ""
+
+
+def test_html_is_populated_when_requested():
+    raw = message(mime="text/html", body_data=encode(HTML_BODY))
+    assert "href=" in parse_message(raw, include_html=True).html
+
+
+def test_html_is_not_truncated_like_body():
+    """An alert with many jobs must not be cut off at BODY_CHAR_LIMIT."""
+    long_html = "<html>" + ("<a href='https://x/1'>Job</a>" * 900) + "</html>"
+    parsed = parse_message(
+        message(mime="text/html", body_data=encode(long_html)), include_html=True
+    )
+    assert len(parsed.html) > BODY_CHAR_LIMIT
+    assert len(parsed.body) <= BODY_CHAR_LIMIT
+
+
+def test_requesting_html_leaves_the_other_fields_identical():
+    raw = message(mime="text/html", body_data=encode(HTML_BODY))
+    plain, with_html = parse_message(raw), parse_message(raw, include_html=True)
+    assert plain.subject == with_html.subject
+    assert plain.sender_email == with_html.sender_email
+    assert plain.received == with_html.received
+    assert plain.body == with_html.body
