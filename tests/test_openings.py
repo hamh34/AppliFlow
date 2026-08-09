@@ -47,6 +47,19 @@ class TestLocations:
     def test_empty_list_matches_everything(self):
         assert matches_locations(make(location="Mars"), [])
 
+    def test_blank_location_is_kept(self):
+        """An unknown location is not evidence of a mismatch.
+
+        Alert emails are the case that matters: location is the least reliable
+        field the parser produces, so dropping blanks would bin real postings
+        and read as a board that sent nothing.
+        """
+        assert matches_locations(make(location=""), ["Jakarta"])
+        assert matches_locations(make(location="   "), ["Jakarta"])
+
+    def test_a_location_that_is_present_and_wrong_still_fails(self):
+        assert not matches_locations(make(location="Berlin, Germany"), ["Jakarta"])
+
 
 class TestRecency:
     def test_recent_posting_passes(self):

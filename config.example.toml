@@ -27,10 +27,31 @@ followup_days = 14
 # --- Finding new openings (`appliflow find`) --------------------------------
 # Pulls from official public job-board APIs. No API key, no scraping.
 [find]
-# Title must contain one of these. Empty list = no keyword filter.
-keywords = ["data analyst", "data scientist", "business intelligence"]
+# Title must contain one of these -- a plain substring match, not whole words.
+# That is why the entries below are word *stems*: "sustainab" catches both
+# "Sustainability Analyst" and "Sustainable Finance Officer" in one entry.
+# Indonesian terms are here on purpose: local boards post in Indonesian.
+# Empty list = no keyword filter.
+keywords = [
+    "sustainab",      # sustainability, sustainable
+    "keberlanjutan",
+    "esg",
+    "climate",
+    "iklim",
+    "environment",    # environment, environmental
+    "lingkungan",
+    "emission",
+    "emisi",
+    "carbon",         # also matches "hydrocarbon" -- oil and gas noise
+    "karbon",
+    "green finance",
+    "green econom",
+    "renewable",
+    "terbarukan",
+]
 
 # Location substring match. "remote" also matches roles flagged remote.
+# Postings whose location could not be parsed are kept, not dropped.
 # Empty list = anywhere.
 locations = ["Jakarta", "Indonesia", "Remote"]
 

@@ -63,8 +63,17 @@ def matches_keywords(opening: Opening, keywords: list[str]) -> bool:
 
 
 def matches_locations(opening: Opening, locations: list[str]) -> bool:
-    """True when the location matches any entry. 'remote' also matches remote roles."""
+    """True when the location matches any entry. 'remote' also matches remote roles.
+
+    Postings with no location are kept, for the same reason `is_recent` keeps
+    undated ones: an unknown location is not evidence of a mismatch. This
+    matters most for alert emails, where location is the least reliable field
+    the parser produces -- dropping blanks would silently bin real jobs and
+    look like the board sent nothing.
+    """
     if not locations:
+        return True
+    if not opening.location.strip():
         return True
     haystack = opening.location.lower()
     for location in locations:
