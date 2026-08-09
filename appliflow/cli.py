@@ -257,8 +257,12 @@ def _explain_alerts(messages) -> None:
                   "(tokens redacted):")
             for host, count, samples in report.unmatched_hosts()[:6]:
                 print(f"      {host}  ({count} link(s))")
-                for sample in samples:
-                    print(f"        {sample}")
+                for url, anchor in samples:
+                    print(f"        {url}")
+                    # When the URL is an opaque redirect, the anchor is all
+                    # that is left to build a posting from.
+                    print(f"          anchor: {anchor!r}" if anchor
+                          else "          anchor: (none)")
     print("\n--- end detail ---\n")
 
 

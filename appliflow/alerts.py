@@ -489,22 +489,26 @@ class MessageReport:
         """Job-shaped links that yielded nothing -- the interesting failures."""
         return [link for link in self.links if link.board and link.opening is None]
 
-    def unmatched_hosts(self, per_host: int = 3) -> list[tuple[str, int, list[str]]]:
+    def unmatched_hosts(
+        self, per_host: int = 3
+    ) -> list[tuple[str, int, list[tuple[str, str]]]]:
         """Distinct link shapes that matched no board, worst-case diagnosis.
 
-        When an email produces no postings at all, the patterns are wrong and
-        the only way to fix them is to see the URLs they failed on.
+        Each sample is (url, anchor text). The anchor matters as much as the
+        URL: when a board hides its destination behind an opaque click-tracking
+        redirect, no pattern can recover the job id, and the only question left
+        is whether the anchor carries enough to build a posting without one.
         """
         counts: Counter[str] = Counter()
-        samples: dict[str, list[str]] = {}
+        samples: dict[str, list[tuple[str, str]]] = {}
         for link in self.links:
             if link.board or not link.href:
                 continue
             host = urllib.parse.urlsplit(link.href).netloc or "(no host)"
             counts[host] += 1
             seen = samples.setdefault(host, [])
-            if link.href not in seen and len(seen) < per_host:
-                seen.append(link.href)
+            if len(seen) < per_host and all(link.href != url for url, _ in seen):
+                seen.append((link.href, link.anchor))
         return [(host, count, samples[host]) for host, count in counts.most_common()]
 
 

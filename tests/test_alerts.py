@@ -473,7 +473,9 @@ class TestExplainMessages:
         hosts = report.unmatched_hosts()
         assert hosts[0][0] == "jobs.newboard.com"
         assert hosts[0][1] == 2
-        assert "https://jobs.newboard.com/vacancy/8812" in hosts[0][2]
+        # Samples carry the anchor too: when the URL is an opaque redirect the
+        # anchor is the only thing left to build a posting from.
+        assert ("https://jobs.newboard.com/vacancy/8812", "Data Engineer") in hosts[0][2]
 
     def test_caps_the_samples_per_host(self):
         html = "".join(
