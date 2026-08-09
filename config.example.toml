@@ -33,21 +33,48 @@ followup_days = 14
 # Indonesian terms are here on purpose: local boards post in Indonesian.
 # Empty list = no keyword filter.
 keywords = [
-    "sustainab",      # sustainability, sustainable
+    # --- Sustainability / ESG ---------------------------------------------
+    "sustainab",      # sustainability, sustainable finance
     "keberlanjutan",
     "esg",
     "climate",
     "iklim",
-    "environment",    # environment, environmental
+    "environment",    # environment, environmental -- also pulls HSE roles
     "lingkungan",
     "emission",
     "emisi",
     "carbon",         # also matches "hydrocarbon" -- oil and gas noise
     "karbon",
-    "green finance",
-    "green econom",
     "renewable",
     "terbarukan",
+
+    # --- Research ----------------------------------------------------------
+    "research",       # research, researcher, research analyst, equity research
+    "riset",
+    "peneliti",
+    "policy",
+    "kebijakan",
+
+    # --- Economics ---------------------------------------------------------
+    "econom",         # economics, economist, economy, green economy
+    "ekonom",
+
+    # --- Investment / capital markets --------------------------------------
+    "equity",
+    "investment",
+    "investasi",
+    "portfolio",
+    "portofolio",
+    "valuation",
+    "fixed income",
+
+    # --- Broad: highest recall, highest noise. Trim these first. -----------
+    "analyst",        # also Data / Business / Credit / QA / SOC Analyst
+    "analis",
+    "finance",        # also Finance Staff, Accounting & Finance
+    "keuangan",
+    "risk",
+    "risiko",
 ]
 
 # Location substring match. "remote" also matches roles flagged remote.
