@@ -101,6 +101,114 @@ def cmd_scan(args) -> int:
     return 0
 
 
+def cmd_doctor(args) -> int:
+    """Check the setup end to end and name the specific fix for anything broken."""
+    from . import diagnose
+    from .diagnose import FAIL, OK, Check
+
+    config_path = Path(args.config) if args.config else config_module.DEFAULT_CONFIG_PATH
+    checks = [diagnose.check_config(config_path)]
+
+    print("Checking your setup...\n")
+
+    config = None
+    if checks[0].state == OK:
+        try:
+            config = config_module.load(config_path)
+        except ConfigError as exc:
+            checks[0] = Check("config.toml", FAIL, str(exc).splitlines()[0])
+
+    if config is None:
+        print(diagnose.render(checks))
+        print("\nFix the above, then run doctor again.")
+        return 1
+
+    checks.append(diagnose.check_credentials(config.credentials_file))
+    checks.append(diagnose.check_token(config.token_file))
+    checks.append(diagnose.check_alert_config(config.find.alerts))
+
+    # Live checks only make sense once the local files are in order.
+    if all(check.state != FAIL for check in checks[:3]):
+        try:
+            creds = get_credentials(config.credentials_file, config.token_file)
+            checks.append(_check_sheet(creds, config))
+            if config.find.alerts.enabled:
+                checks.append(_check_inbox(creds, config))
+        except AuthError as exc:
+            checks.append(Check("google sign-in", FAIL, str(exc).splitlines()[0],
+                                "run: python -m appliflow init"))
+        except Exception as exc:  # network, API not enabled, revoked access
+            checks.append(Check("google sign-in", FAIL, f"{type(exc).__name__}: {exc}",
+                                "check that Gmail API and Sheets API are enabled "
+                                "in your Google Cloud project"))
+
+    print(diagnose.render(checks))
+    failed = [check for check in checks if check.state == FAIL]
+    print()
+    if failed:
+        print(f"{len(failed)} problem(s) found. Fix the ones marked [--] above.")
+        return 1
+    print("Everything checks out. Try: python -m appliflow find --explain --no-sheet")
+    return 0
+
+
+def _check_sheet(creds, config):
+    """Confirm the signed-in account can actually open the configured sheet."""
+    from googleapiclient.discovery import build
+
+    from .diagnose import FAIL, OK, Check
+
+    try:
+        service = build("sheets", "v4", credentials=creds, cache_discovery=False)
+        meta = service.spreadsheets().get(spreadsheetId=config.spreadsheet_id).execute()
+    except Exception as exc:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status == 404:
+            return Check("spreadsheet", FAIL, "not found",
+                         "check spreadsheet_id in config.toml")
+        if status == 403:
+            return Check(
+                "spreadsheet", FAIL, "signed-in account cannot open it",
+                "sign in as the account that owns the sheet, or share the sheet "
+                "with the account you authorized",
+            )
+        return Check("spreadsheet", FAIL, f"{type(exc).__name__}: {exc}")
+
+    title = meta.get("properties", {}).get("title", "untitled")
+    tabs = [s["properties"]["title"] for s in meta.get("sheets", [])]
+    return Check("spreadsheet", OK, f"'{title}' reachable; tabs: {', '.join(tabs)}")
+
+
+def _check_inbox(creds, config):
+    """Report whether alert emails have actually started arriving yet."""
+    from googleapiclient.discovery import build
+
+    from .alerts import gmail_query
+    from .diagnose import FAIL, OK, Check
+
+    query = gmail_query(config.find.alerts.lookback_days, config.find.alerts.boards)
+    try:
+        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        response = (
+            service.users().messages()
+            .list(userId="me", q=query, maxResults=10)
+            .execute()
+        )
+    except Exception as exc:
+        return Check("job alerts in inbox", FAIL, f"{type(exc).__name__}: {exc}")
+
+    count = len(response.get("messages", []))
+    if count == 0:
+        return Check(
+            "job alerts in inbox", FAIL,
+            f"no alert emails in the last {config.find.alerts.lookback_days} days",
+            "turn on job alerts (LinkedIn, JobStreet, Glints, Kalibrr, Glassdoor), "
+            "set them to Daily with email delivery on, and wait for the first one",
+        )
+    more = "+" if count >= 10 else ""
+    return Check("job alerts in inbox", OK, f"{count}{more} alert email(s) found")
+
+
 def _explain_alerts(messages) -> None:
     """Show what was pulled out of each alert email, so misreads are visible.
 
@@ -338,6 +446,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="show changes without writing"
     )
     scan.set_defaults(func=cmd_scan)
+
+    subparsers.add_parser(
+        "doctor", help="check your setup and report what needs fixing"
+    ).set_defaults(func=cmd_doctor)
 
     find = subparsers.add_parser("find", help="search job boards for new openings")
     find.add_argument(

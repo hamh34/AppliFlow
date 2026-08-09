@@ -178,6 +178,18 @@ many of whom run their own career pages. Check a company's careers URL before
 adding it.
 
 
+## When setup goes wrong
+
+```bash
+python -m appliflow doctor
+```
+
+Checks each part of the setup separately and names the specific fix for
+anything broken: config file, OAuth client type (the Web-vs-Desktop mix-up is
+the usual culprit), authorization, whether the signed-in account can actually
+open the sheet, and whether alert emails have started arriving yet.
+
+
 ## The sheet
 
 `init` writes these columns. Anything you type into **Notes** is preserved across scans.
