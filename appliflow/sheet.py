@@ -18,6 +18,24 @@ class SheetError(RuntimeError):
     pass
 
 
+def _add_tab_if_missing(service, spreadsheet_id: str, title: str) -> None:
+    """Create a worksheet when the spreadsheet does not have it yet.
+
+    A brand new spreadsheet arrives with one tab called `Sheet1`, so every tab
+    this tool writes to is missing on the first run. Reading a range on a tab
+    that does not exist fails with an opaque "Unable to parse range", which is
+    a poor way to learn that the fix is one API call away.
+    """
+    metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+    titles = {sheet["properties"]["title"] for sheet in metadata.get("sheets", [])}
+    if title in titles:
+        return
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": [{"addSheet": {"properties": {"title": title}}}]},
+    ).execute()
+
+
 class Tracker:
     def __init__(self, creds, spreadsheet_id: str, worksheet: str):
         from googleapiclient.discovery import build
@@ -30,6 +48,10 @@ class Tracker:
     def _range(self, cells: str) -> str:
         # Quote the tab name so worksheets with spaces resolve correctly.
         return f"'{self.worksheet}'!{cells}"
+
+    def ensure_tab(self) -> None:
+        """Create the Applications tab if the spreadsheet does not have it."""
+        _add_tab_if_missing(self._service, self.spreadsheet_id, self.worksheet)
 
     def ensure_header(self) -> bool:
         """Write the header row if it is missing. Returns True if it wrote one."""
@@ -114,18 +136,7 @@ class OpeningsSheet:
 
     def ensure_tab(self) -> None:
         """Create the worksheet if the spreadsheet does not have it yet."""
-        metadata = self._service.spreadsheets().get(
-            spreadsheetId=self.spreadsheet_id
-        ).execute()
-        titles = {
-            sheet["properties"]["title"] for sheet in metadata.get("sheets", [])
-        }
-        if self.worksheet in titles:
-            return
-        self._service.spreadsheets().batchUpdate(
-            spreadsheetId=self.spreadsheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": self.worksheet}}}]},
-        ).execute()
+        _add_tab_if_missing(self._service, self.spreadsheet_id, self.worksheet)
 
     def ensure_header(self) -> bool:
         existing = (

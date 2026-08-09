@@ -43,6 +43,7 @@ def _describe(app) -> str:
 
 def cmd_init(args) -> int:
     _, _, tracker = _connect(args)
+    tracker.ensure_tab()
     if tracker.ensure_header():
         print("Header row written. Your sheet is ready.")
     else:
@@ -63,6 +64,7 @@ def cmd_scan(args) -> int:
     candidates = applications_from_messages(messages)
     print(f"{len(messages)} messages matched, {len(candidates)} look application-related.")
 
+    tracker.ensure_tab()
     tracker.ensure_header()
     existing = tracker.read_all()
     changed, added = merge_all(existing, candidates)
