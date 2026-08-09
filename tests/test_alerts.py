@@ -3,10 +3,16 @@ from datetime import date
 import pytest
 
 from appliflow.alerts import (
+    CHROME_ANCHOR,
+    NO_ANCHOR,
+    NOT_A_JOB,
+    analyze_html,
+    explain_messages,
     gmail_query,
     identify,
     openings_from_html,
     openings_from_messages,
+    redact_url,
     unwrap_url,
 )
 from appliflow.gmail import Message
@@ -26,6 +32,9 @@ class TestIdentify:
             ("https://www.linkedin.com/jobs/view/3812345678/", "linkedin", "3812345678"),
             ("https://www.linkedin.com/comm/jobs/view/3812345678", "linkedin", "3812345678"),
             ("https://www.jobstreet.co.id/id/job/74839201", "jobstreet", "74839201"),
+            # JobStreet Indonesia also serves the .com domain, which `senders`
+            # already accepts mail from.
+            ("https://id.jobstreet.com/id/job/74839201", "jobstreet", "74839201"),
             ("https://glints.com/id/opportunities/jobs/abc-123", "glints", "abc-123"),
             ("https://www.kalibrr.com/c/tokopedia/jobs/998877", "kalibrr", "998877"),
             (
@@ -54,6 +63,12 @@ class TestIdentify:
     def test_kalibrr_canonical_keeps_the_company_slug(self):
         _, _, url = identify("https://www.kalibrr.com/c/gojek/jobs/5551234")
         assert url == "https://www.kalibrr.com/c/gojek/jobs/5551234"
+
+    def test_both_jobstreet_domains_reach_one_canonical_url(self):
+        """Same job id on either domain must collapse to a single row."""
+        old = identify("https://www.jobstreet.co.id/id/job/74839201")
+        new = identify("https://id.jobstreet.com/id/job/74839201")
+        assert old[2] == new[2]
 
 
 class TestUnwrapUrl:
@@ -154,6 +169,145 @@ class TestOpeningsFromMessages:
             sender_email="x@linkedin.com", received=None, body="text only", html="",
         )
         assert openings_from_messages([message]) == []
+
+
+class TestRedactUrl:
+    """`--explain` output is meant to be shared, so it must not carry tokens."""
+
+    def test_keeps_the_job_id_a_pattern_would_key_on(self):
+        cleaned = redact_url(
+            "https://www.glassdoor.com/partner/jobListing.htm"
+            "?jobListingId=1009988&ao=SecretToken"
+        )
+        assert "jobListingId=1009988" in cleaned
+        assert "SecretToken" not in cleaned
+
+    def test_redacts_tracking_values_but_keeps_their_names(self):
+        cleaned = redact_url("https://www.linkedin.com/jobs/view/1?midToken=AQFsecret")
+        # The name is what tells you where to look next; the value is the leak.
+        assert "midToken=<redacted>" in cleaned
+        assert "AQFsecret" not in cleaned
+
+    # example.com is reserved for documentation -- never a real address, and a
+    # test about not leaking addresses should not carry one.
+
+    def test_removes_an_email_address_in_a_query_value(self):
+        cleaned = redact_url("https://x.com/unsub?email=jobseeker%40example.com")
+        assert "jobseeker" not in cleaned
+
+    def test_removes_an_email_address_outside_the_query(self):
+        """Value-redaction only covers the query; the path needs its own sweep."""
+        cleaned = redact_url("https://x.com/unsub/jobseeker@example.com")
+        assert "jobseeker" not in cleaned
+        assert "<email>" in cleaned
+
+    def test_keeps_a_nested_redirect_target_and_redacts_inside_it(self):
+        cleaned = redact_url(
+            "https://click.example.com/r?u=https://glints.com/opportunities/jobs/zz-9?tok=abc"
+        )
+        assert "glints.com/opportunities/jobs/zz-9" in cleaned
+        assert "abc" not in cleaned
+
+    def test_collapses_an_opaque_path_segment(self):
+        cleaned = redact_url("https://click.x.com/f/a/" + "A1b2C3d4" * 5 + "/unsub")
+        assert "<token>" in cleaned
+        assert "A1b2C3d4A1b2" not in cleaned
+
+    def test_leaves_a_clean_job_url_untouched(self):
+        url = "https://www.kalibrr.com/c/gojek/jobs/5551234"
+        assert redact_url(url) == url
+
+    def test_never_raises_on_junk(self):
+        assert redact_url("http://[") == "<unparseable url>"
+        assert redact_url("") == ""
+
+
+class TestAnalyzeHtml:
+    """The evidence `--explain` prints, which is what misreads get fixed from."""
+
+    def test_reports_the_text_the_split_ran_on(self):
+        html = alert(
+            "https://www.linkedin.com/jobs/view/1",
+            "Data Analyst",
+            "Tokopedia · Jakarta, Indonesia · 2 days ago",
+        )
+        report = analyze_html(html)[0]
+        assert report.trailing == "Tokopedia · Jakarta, Indonesia · 2 days ago"
+        assert report.opening.company == "Tokopedia"
+
+    def test_explains_why_a_job_link_produced_nothing(self):
+        html = (
+            '<a href="https://www.linkedin.com/jobs/view/1">Apply now</a>'
+            '<a href="https://www.linkedin.com/jobs/view/2"><img src="x"/></a>'
+            '<a href="https://www.linkedin.com/feed/">Your network</a>'
+        )
+        reasons = [r.skipped for r in analyze_html(html)]
+        assert reasons == [CHROME_ANCHOR, NO_ANCHOR, NOT_A_JOB]
+
+    def test_redacts_the_href_it_reports(self):
+        html = alert("https://www.linkedin.com/jobs/view/1?midToken=AQFsecret", "Data Analyst")
+        assert "AQFsecret" not in analyze_html(html)[0].href
+
+    def test_matches_what_openings_from_html_returns(self):
+        """One parsing pass, so `--explain` cannot describe a different run."""
+        html = (
+            '<a href="https://www.linkedin.com/jobs/view/1">Data Analyst</a> Grab · Jakarta'
+            '<a href="https://www.linkedin.com/jobs/view/2">Apply now</a>'
+            '<a href="https://www.linkedin.com/jobs/view/3">Data Scientist</a> Gojek'
+        )
+        from_reports = [r.opening for r in analyze_html(html) if r.opening]
+        assert from_reports == openings_from_html(html)
+
+    @pytest.mark.parametrize("html", ["", None, "not html at all", "<a href=>broken"])
+    def test_survives_empty_and_malformed_input(self, html):
+        # Bad markup may still yield reports -- an anchor with no usable href is
+        # worth showing -- but it must never raise and never invent a posting.
+        assert [r.opening for r in analyze_html(html) if r.opening] == []
+
+
+class TestExplainMessages:
+    def message(self, html):
+        return Message(
+            message_id="m", thread_id="t", subject="Your job alert",
+            sender_name="LinkedIn", sender_email="jobs@linkedin.com",
+            received=date(2026, 8, 9), body="", html=html,
+        )
+
+    def test_separates_postings_from_skipped_job_links(self):
+        html = (
+            '<a href="https://www.linkedin.com/jobs/view/1">Data Analyst</a> Grab'
+            '<a href="https://www.linkedin.com/jobs/view/2">Apply now</a>'
+        )
+        report = explain_messages([self.message(html)])[0]
+        assert [r.opening.title for r in report.matched] == ["Data Analyst"]
+        assert [r.skipped for r in report.skipped_jobs] == [CHROME_ANCHOR]
+
+    def test_groups_unmatched_links_by_host_for_diagnosis(self):
+        """When nothing matches, the URLs it failed on are the only clue."""
+        html = (
+            '<a href="https://jobs.newboard.com/vacancy/8812">Data Engineer</a> PT Maju'
+            '<a href="https://jobs.newboard.com/vacancy/8813">Analis Data</a> Traveloka'
+            '<a href="https://newboard.com/about">About</a>'
+        )
+        report = explain_messages([self.message(html)])[0]
+        assert report.matched == []
+        hosts = report.unmatched_hosts()
+        assert hosts[0][0] == "jobs.newboard.com"
+        assert hosts[0][1] == 2
+        assert "https://jobs.newboard.com/vacancy/8812" in hosts[0][2]
+
+    def test_caps_the_samples_per_host(self):
+        html = "".join(
+            f'<a href="https://newboard.com/vacancy/{n}">Role {n}</a>' for n in range(10)
+        )
+        host, count, samples = explain_messages([self.message(html)])[0].unmatched_hosts()[0]
+        assert count == 10
+        assert len(samples) == 3
+
+    def test_flags_an_email_with_no_html_part(self):
+        report = explain_messages([self.message("")])[0]
+        assert report.has_html is False
+        assert report.links == []
 
 
 class TestGmailQuery:

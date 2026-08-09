@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 
 from .openings import Opening
@@ -50,7 +51,10 @@ BOARDS: tuple[Board, ...] = (
     ),
     Board(
         "jobstreet",
-        re.compile(r"jobstreet\.co\.id/(?:[a-z-]+/)*job/(\d+)", re.I),
+        # Both domains: JobStreet Indonesia serves id.jobstreet.com as well as
+        # the older jobstreet.co.id, and `senders` below accepts mail from both.
+        # Job ids are shared, so one canonical form still collapses duplicates.
+        re.compile(r"jobstreet\.(?:co\.id|com)/(?:[a-z-]+/)*job/(\d+)", re.I),
         ("jobstreet.co.id", "jobstreet.com"),
         "https://www.jobstreet.co.id/job/{id}",
     ),
@@ -143,6 +147,61 @@ def unwrap_url(url: str) -> str:
     return seen
 
 
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+# A path segment this long with no punctuation is a tracking blob, not a slug.
+_OPAQUE_SEGMENT = re.compile(r"^[A-Za-z0-9_-]{32,}$")
+
+
+def _redact_value(value: str) -> str:
+    """Keep the parts of a query value a pattern could key on, drop the rest.
+
+    Numeric ids are kept because that is what the job-id patterns capture, and
+    nested URLs are kept (redacted in turn) because tracking wrappers hide the
+    real destination in one. Anything else is assumed to be a per-recipient
+    token. The parameter *name* always survives, so a board that hides its job
+    id somewhere new still shows up as `?vacancyId=<redacted>` -- enough to know
+    what to ask for without leaking the token itself.
+    """
+    if not value:
+        return value
+    if value.isdigit():
+        return value
+    if "://" in value:
+        return redact_url(value)
+    return "<redacted>"
+
+
+def redact_url(url: str) -> str:
+    """Strip per-recipient tokens from a URL so it is safe to share.
+
+    `--explain` exists to be read by someone other than the mailbox's owner, so
+    what it prints must not carry the mailbox with it. Alert links are stuffed
+    with tracking parameters tied to the recipient's account, and footer links
+    often carry the address in the clear.
+    """
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError:
+        return "<unparseable url>"
+
+    segments = [
+        "<token>" if _OPAQUE_SEGMENT.match(segment) else segment
+        for segment in parts.path.split("/")
+    ]
+    path = "/".join(segments)
+
+    query = ""
+    if parts.query:
+        pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        if pairs:
+            query = "&".join(f"{key}={_redact_value(value)}" for key, value in pairs)
+        else:
+            query = "<redacted>"
+
+    cleaned = urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, query, ""))
+    return _EMAIL.sub("<email>", cleaned)
+
+
 def identify(url: str) -> tuple[Board, str, str] | None:
     """Return (board, job id, canonical url) for a job link, else None."""
     target = unwrap_url(url)
@@ -186,8 +245,35 @@ def _split_details(after: str, board_name: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def openings_from_html(html: str, *, source_label: str = "alert") -> list[Opening]:
-    """Extract every job posting linked from one alert email."""
+@dataclass
+class LinkReport:
+    """One `<a>` from an alert email, with the parser's working shown.
+
+    `--explain` prints these. The fields that matter for correcting a misread
+    are `trailing` -- the exact text `_split_details` was handed -- and `href`,
+    which is what `identify` actually matched against.
+    """
+
+    href: str  # Unwrapped and redacted; safe to paste somewhere else.
+    anchor: str
+    trailing: str
+    board: str = ""  # Empty when the URL matched no board pattern.
+    opening: Opening | None = None
+    skipped: str = ""  # Why no Opening came out: see the reasons below.
+
+
+NOT_A_JOB = "not a job link"
+CHROME_ANCHOR = "anchor text is boilerplate, not a title"
+NO_ANCHOR = "no anchor text, so the title would be blank"
+
+
+def analyze_html(html: str, *, source_label: str = "alert") -> list[LinkReport]:
+    """Walk every link in one alert email and report what came of it.
+
+    This is the single parsing pass; `openings_from_html` is a filter over its
+    output. Keeping one implementation means `--explain` cannot drift into
+    describing something the real run does not do.
+    """
     parser = _LinkCollector()
     try:
         parser.feed(html or "")
@@ -196,34 +282,118 @@ def openings_from_html(html: str, *, source_label: str = "alert") -> list[Openin
         # A malformed email should cost one message, never the whole run.
         return []
 
-    found: list[Opening] = []
+    reports: list[LinkReport] = []
     for link in parser.links:
-        identified = identify(link["href"])
+        raw_href = link["href"]
+        anchor = _clean(" ".join(link["text"]))
+        trailing = _clean(" ".join(link["after"]))
+
+        identified = identify(raw_href)
+        href = redact_url(unwrap_url(raw_href))
         if not identified:
+            reports.append(
+                LinkReport(href=href, anchor=anchor, trailing=trailing, skipped=NOT_A_JOB)
+            )
             continue
-        board, job_id, canonical = identified
+        board, _job_id, canonical = identified
 
-        title = _clean(" ".join(link["text"]))
-        if not title or _looks_like_chrome(title):
+        if not anchor:
+            reports.append(
+                LinkReport(href=href, anchor=anchor, trailing=trailing,
+                           board=board.name, skipped=NO_ANCHOR)
+            )
+            continue
+        if _looks_like_chrome(anchor):
+            reports.append(
+                LinkReport(href=href, anchor=anchor, trailing=trailing,
+                           board=board.name, skipped=CHROME_ANCHOR)
+            )
             continue
 
-        company, location = _split_details(" ".join(link["after"]), board.name)
+        company, location = _split_details(trailing, board.name)
         if board.name == "kalibrr" and not company:
             # Kalibrr puts the employer slug in the URL itself.
             slug = re.search(r"/c/([^/]+)/", canonical)
             if slug:
                 company = slug.group(1).replace("-", " ").title()
 
-        found.append(
-            Opening(
-                company=company,
-                title=title,
-                location=location,
-                url=canonical,
-                source=f"{source_label}:{board.name}",
+        reports.append(
+            LinkReport(
+                href=href,
+                anchor=anchor,
+                trailing=trailing,
+                board=board.name,
+                opening=Opening(
+                    company=company,
+                    title=anchor,
+                    location=location,
+                    url=canonical,
+                    source=f"{source_label}:{board.name}",
+                ),
             )
         )
-    return found
+    return reports
+
+
+def openings_from_html(html: str, *, source_label: str = "alert") -> list[Opening]:
+    """Extract every job posting linked from one alert email."""
+    return [
+        report.opening
+        for report in analyze_html(html, source_label=source_label)
+        if report.opening is not None
+    ]
+
+
+@dataclass
+class MessageReport:
+    """`--explain` detail for one alert email."""
+
+    subject: str
+    sender: str
+    received: object = None
+    links: list[LinkReport] = field(default_factory=list)
+    has_html: bool = True
+
+    @property
+    def matched(self) -> list[LinkReport]:
+        return [link for link in self.links if link.opening is not None]
+
+    @property
+    def skipped_jobs(self) -> list[LinkReport]:
+        """Job-shaped links that yielded nothing -- the interesting failures."""
+        return [link for link in self.links if link.board and link.opening is None]
+
+    def unmatched_hosts(self, per_host: int = 3) -> list[tuple[str, int, list[str]]]:
+        """Distinct link shapes that matched no board, worst-case diagnosis.
+
+        When an email produces no postings at all, the patterns are wrong and
+        the only way to fix them is to see the URLs they failed on.
+        """
+        counts: Counter[str] = Counter()
+        samples: dict[str, list[str]] = {}
+        for link in self.links:
+            if link.board or not link.href:
+                continue
+            host = urllib.parse.urlsplit(link.href).netloc or "(no host)"
+            counts[host] += 1
+            seen = samples.setdefault(host, [])
+            if link.href not in seen and len(seen) < per_host:
+                seen.append(link.href)
+        return [(host, count, samples[host]) for host, count in counts.most_common()]
+
+
+def explain_messages(messages) -> list[MessageReport]:
+    """Build `--explain` detail for a batch of alert emails."""
+    return [
+        MessageReport(
+            subject=message.subject,
+            sender=message.sender_email,
+            received=message.received,
+            links=analyze_html(message.html),
+            has_html=bool(message.html),
+        )
+        for message in messages
+    ]
 
 
 def openings_from_messages(messages) -> list[Opening]:

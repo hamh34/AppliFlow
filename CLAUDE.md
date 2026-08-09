@@ -56,7 +56,7 @@ for this.
 
 ## Current state (Aug 2026)
 
-Code is complete and pushed on branch `AppliFlow`; **193 tests pass**. Setup on
+Code is complete and pushed on branch `AppliFlow`; **214 tests pass**. Setup on
 the user's machine is not finished.
 
 Remaining steps, in order:
@@ -86,3 +86,30 @@ arranges it differently.
 spotted and the per-board heuristics corrected. That is the intended next
 iteration. The user's mail never needs to leave their machine — the `--explain`
 output is enough to fix the patterns.
+
+**`--explain` prints evidence, not just verdicts**, so one run should be enough
+to correct a heuristic without a second round trip:
+
+- `split from:` is the exact string `_split_details` was handed. When company or
+  location is wrong, that line says why — the fix is a separator or an ordering
+  rule, and it is visible without the original email.
+- Job-shaped links that produced no row are listed with the reason (boilerplate
+  anchor, empty anchor). A silently dropped posting would otherwise look like a
+  board that simply sent nothing.
+- When an email yields nothing at all, the links it *did* see are grouped by
+  host with samples. A wrong URL pattern cannot be fixed without seeing the URL
+  it failed on.
+
+`redact_url` scrubs every URL on the way out: tracking parameter values, opaque
+path segments, and email addresses go, while numeric job ids and parameter
+*names* stay. So `--explain` output is safe to paste elsewhere — that is the
+point, since the person fixing a pattern may not be the mailbox's owner. A board
+hiding its id in an unexpected parameter still shows as `?vacancyId=<redacted>`,
+which names what to ask for.
+
+One defect this surfaced before any real mail arrived: `senders` accepted
+`jobstreet.com` while the link pattern only matched `jobstreet.co.id`, so alerts
+from `id.jobstreet.com` were fetched and then parsed to nothing. Fixed, with
+both domains canonicalizing to one URL so dedupe still collapses them. Worth
+re-checking the other four boards the same way against real mail — an
+inconsistency between `senders` and `pattern` is invisible until an email lands.

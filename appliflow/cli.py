@@ -212,29 +212,51 @@ def _check_inbox(creds, config):
 def _explain_alerts(messages) -> None:
     """Show what was pulled out of each alert email, so misreads are visible.
 
-    Nothing leaves the machine: this prints locally so you can compare the
-    parser's guesses against the mail in front of you and report what is wrong.
+    Nothing leaves the machine on its own: this prints locally. It prints the
+    *evidence* as well as the verdict -- the raw text each company/location was
+    split from, and the links that matched nothing -- because those are what a
+    wrong heuristic has to be corrected against. URLs are redacted on the way
+    out, so the detail below can be pasted somewhere else without carrying the
+    mailbox's tracking tokens with it.
     """
-    from .alerts import openings_from_html
+    from .alerts import explain_messages
 
     print("\n--- alert parsing detail ---")
-    for message in messages:
-        openings = openings_from_html(message.html)
-        received = message.received.isoformat() if message.received else "unknown date"
-        print(f"\n{message.sender_email} | {received}")
-        print(f"  subject: {message.subject[:70]}")
-        if not message.html:
+    for report in explain_messages(messages):
+        received = report.received.isoformat() if report.received else "unknown date"
+        print(f"\n{report.sender} | {received}")
+        print(f"  subject: {report.subject[:70]}")
+
+        if not report.has_html:
             print("  (no HTML part found in this email)")
             continue
-        if not openings:
-            print("  no job links matched -- send this sender/subject over so the "
-                  "pattern can be added")
-            continue
-        for opening in openings:
-            print(f"  - title:    {opening.title}")
-            print(f"    company:  {opening.company or '(not found)'}")
-            print(f"    location: {opening.location or '(not found)'}")
-            print(f"    source:   {opening.source}")
+
+        matched = report.matched
+        print(f"  {len(matched)} posting(s) parsed, {len(report.links)} link(s) seen")
+
+        for link in matched:
+            opening = link.opening
+            print(f"\n  [{link.board}] {opening.title}")
+            print(f"      company   : {opening.company or '(not found)'}")
+            print(f"      location  : {opening.location or '(not found)'}")
+            # The line that makes a misread fixable: what the split ran on.
+            print(f"      split from: {link.trailing!r}" if link.trailing
+                  else "      split from: (no text found after the link)")
+            print(f"      link      : {link.href}")
+
+        skipped = report.skipped_jobs
+        if skipped:
+            print(f"\n  {len(skipped)} job link(s) produced no row:")
+            for link in skipped:
+                print(f"      {link.skipped}: {link.anchor!r}")
+
+        if not matched:
+            print("\n  No postings came out of this email. Links it saw "
+                  "(tokens redacted):")
+            for host, count, samples in report.unmatched_hosts()[:6]:
+                print(f"      {host}  ({count} link(s))")
+                for sample in samples:
+                    print(f"        {sample}")
     print("\n--- end detail ---\n")
 
 

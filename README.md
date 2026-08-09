@@ -158,9 +158,26 @@ duplicates -- the same posting in Monday's and Tuesday's alert collapses to one
 row.
 
 Company and location are the soft spot: they sit in loose text next to the
-link, and every board arranges it differently. That is what `--explain` is for
--- it prints what was extracted so you can spot a misread and report it. Your
-mail stays on your machine.
+link, and every board arranges it differently. That is what `--explain` is for.
+It prints the evidence, not just the verdict:
+
+```
+  [linkedin] Data Analyst
+      company   : Tokopedia
+      location  : Jakarta, Indonesia
+      split from: 'Tokopedia · Jakarta, Indonesia · 2 days ago'
+      link      : https://www.linkedin.com/jobs/view/3812345678?midToken=<redacted>
+```
+
+`split from` is the exact text the company/location guess was made on, so a
+misread tells you what to fix without going back to the email. Links that
+matched no pattern are listed too, grouped by host -- a wrong URL pattern can
+only be fixed by seeing the URL it missed.
+
+Your mail stays on your machine, and the detail above is safe to share if you
+want help fixing a pattern: tracking tokens, opaque path segments, and email
+addresses are stripped from every URL, while job ids and parameter names are
+kept.
 
 
 ### Why these sources and not LinkedIn
